@@ -23,6 +23,7 @@ int kid = -1;
 mpfr_t *corr, *cov;
 mpfr_t *expected;
 mpfr_t *mcorr;
+mpfr_t *mass, *bmass, *deltam;
 
 char path[128];
 char file[128];
@@ -116,60 +117,141 @@ void bootstrap_sample()
 	free(rd);
 }
 
+void effective_mass()
+{
+    FILE *fp;
+    
+    mpfr_t tmp;
+    mpfr_init(tmp);
+    mpfr_set_zero(tmp, 1);
+    
+    int *rd;
+    int thalfp=tmx/2+1;
+    
+    rd = malloc(sizeof(int)*nms);
+    randi(rd, nms, 0, nms);
+
+    for (int j = 0; j < nms; j++)
+    {
+        for (int i = 1; i < thalfp; i++)
+        {
+            mpfr_set_zero(tmp, 1);
+            mpfr_add(tmp, mcorr[j*tmx+i+1], mcorr[j*tmx+i-1], ROUNDING);
+
+            mpfr_div(tmp, tmp, mcorr[j*tmx+i], ROUNDING);
+            
+            mpfr_div_d(tmp, tmp, (double)2, ROUNDING);
+            mpfr_acosh(mass[j*tmx+i], tmp, ROUNDING);
+            
+        }
+    }
+   
+    for(int i = 1; i < thalfp; i++)
+    {
+        mpfr_set_zero(bmass[i], 1);
+        for(int j = 0; j < nms; j++)
+        {
+            mpfr_add(bmass[i], bmass[i], mass[rd[j]*tmx+i], ROUNDING);
+        }
+        mpfr_div_d(bmass[i], bmass[i], (double)nms, ROUNDING);
+    }
+    
+    
+    for(int i = 0; i < thalfp; i++)
+    {
+        mpfr_set_zero(bmass[i], 1);
+        for(int j = 0; j < nms; j++)
+        {
+            mpfr_add(bmass[i], bmass[i], mass[rd[j]*tmx+i], ROUNDING);
+        }
+        mpfr_div_d(bmass[i], bmass[i], (double)nms, ROUNDING);
+
+        mpfr_set_zero(deltam[i], 1);
+        for(int j = 0; j < nms; j++)
+        {
+            mpfr_sub(tmp, mass[rd[j]*tmx+i], bmass[i], ROUNDING);
+            mpfr_mul(tmp, tmp, tmp, ROUNDING);
+            mpfr_add(deltam[i], deltam[i], tmp, ROUNDING);
+        }
+        mpfr_div_d(deltam[i], deltam[i], (double)(nms-1), ROUNDING);
+        mpfr_sqrt(deltam[i], deltam[i], ROUNDING);
+
+    }
+    
+    fp = fopen_path("mass.txt");
+    
+    for (int i = 1; i < thalfp; i++)
+    {
+        fprintf(fp, "%3d %1.8e %1.8e\n", i, mpfr_get_d(bmass[i], ROUNDING), mpfr_get_d(deltam[i], ROUNDING) );
+    }
+    
+    fclose(fp);
+    mpfr_clear(tmp);
+    free(rd);
+}
+
+
 void read_corr()
 {
-	double res, dres, norm;
-	char *token;
-	char *buf;
-	int offset;
-	FILE *fp;
+    double res, dres, norm;
+    char *token;
+    char *buf;
+    int offset;
+    FILE *fp;
 
-	fp = fopen(file, "r");
-	if(fp == NULL)
-	{
-		error("Unable to open file for reading");
-	}
+    fp = fopen(file, "r");
+    
+    if(fp == NULL)
+    {
+        error("Unable to open file for reading");
+    }
+  
+    buf = malloc(2048*sizeof(char));
 
-	buf = malloc(2048*sizeof(char));
-	offset = 0;
+    offset = 0;
 
-	while(fgets(buf, 2048, fp))
-	{
-		token = strtok(buf, " ");
+    while(fgets(buf, 2048, fp))
+    {
+  
+        // token = strtok(buf, " ");
+        token = strtok(buf, "//");
+        if(strlen(buf) == 0)
+        {
+          
+            break;
+        }
 
-		if(strlen(buf) == 0)
-		{
-			break;
-		}
+        while(token)
+        {
+   
+            mpfr_set_d(mcorr[offset], atof(token), ROUNDING);
+           // printf("%1.8e", atof(token) );
 
-		while(token)
-		{
-			mpfr_set_d(mcorr[offset], atof(token), ROUNDING);
-			token = strtok(NULL, " ");
-			offset++;
-		}
-	}
+            token = strtok(NULL, "//");
+            offset++;
+        }
+    }
 
-	if(offset != tmx*nms)
-	{
-		error("Error reading correlator data, number of elements is incorrect");
-	}
+    if(offset != tmx*nms)
+    {
+        error("Error reading correlator data, number of elements is incorrect");
+    }
 
-	fclose(fp);
-	fp = fopen_path("correlator.txt");
-	full_sample();
-	norm = mpfr_get_d(corr[0], ROUNDING);
+    fclose(fp);
+    fp = fopen_path("correlator.txt");
+    bootstrap_sample();
+    norm = mpfr_get_d(corr[0], ROUNDING);
 
-	for(int i = 0; i < tmx; i++)
-	{
-		res = mpfr_get_d(corr[i], ROUNDING);
-		dres = mpfr_get_d(cov[i], ROUNDING);
-		dres = norm*sqrt(dres);
-		fprintf(fp, "%3d %1.8e %1.8e\n", i, res, dres);
-	}
+    for(int i = 0; i < tmx; i++)
+    {
+        res = mpfr_get_d(corr[i], ROUNDING);
+        dres = mpfr_get_d(cov[i], ROUNDING);
+        dres = norm*sqrt(dres);
+        fprintf(fp, "%3d %1.8e %1.8e\n", i, res, dres);
+    }
 
-	fclose(fp);
-	free(buf);
+    fclose(fp);
+    free(buf);
 }
 
 void get_spectral_density()
@@ -335,6 +417,9 @@ void allocate_data()
 	corr = malloc(count*sizeof(mpfr_t));
 	cov = corr+tmx;
 	mcorr = cov+tmx;
+    mass = malloc((count+tmx)*sizeof(mpfr_t));
+    bmass = malloc(count*sizeof(mpfr_t));
+    deltam = malloc(count*sizeof(mpfr_t));
 
 	if(corr == NULL)
 	{
@@ -344,7 +429,17 @@ void allocate_data()
 	for(int i = 0; i < count; i++)
 	{
 		mpfr_init(corr[i]);
+        mpfr_init(bmass[i]);
+        mpfr_init(mass[i]);
+        mpfr_init(mcorr[i]);
+        mpfr_init(cov[i]);
+        mpfr_init(deltam[i]);
 	}
+    
+ 
+    
+    
+    
 }
 
 int main(int argc, char *argv[])
@@ -399,6 +494,7 @@ int main(int argc, char *argv[])
 	prepare_path();
 	allocate_data();
 	read_corr();
+        effective_mass();
 
 	if(escan)
 	{
