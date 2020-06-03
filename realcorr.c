@@ -358,7 +358,7 @@ void get_spectral_density()
 
 void scan_lambda()
 {
-	double val, ag, bg, dl;
+    double val, ag, bg, dl, lstar, wg;
 	mpfr_t estar, e0;
 	FILE *fp;
 
@@ -367,18 +367,28 @@ void scan_lambda()
 	mpfr_inits(e0, estar, NULL);
 	mpfr_set_d(e0, emin, ROUNDING);
 	mpfr_set_d(estar, escan, ROUNDING);
+    
+        dl = 0.001;
 
 	full_sample();
-	dl = 0.001;
+	
+        wg = 0;
 
 	for(double l = dl; l < 0.5+dl; l += dl)
 	{
 		set_params(sigma, l, kid);
 		rm_method_cosh(e0, estar, cov);
 		transform(e0, estar, corr, cov, &val, &ag, &bg);
+       	        if (ag+bg > wg) {
+               		 wg = ag+bg;
+               	         lstar = l;
+        	}
 		fprintf(fp, "%1.8e %1.8e %1.8e %1.8e\n", l, ag, bg, ag+bg);
+        
 	}
-
+	
+        printf("Suggested choice for lambda: %1.8e\n", lstar);
+	
 	mpfr_clears(e0, estar, NULL);
 	fclose(fp);
 }
