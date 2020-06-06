@@ -7,7 +7,7 @@
 #include <math.h>
 #include "corefcts.h"
 #include "utils.h"
-
+// imp
 double sigma = 0.1;
 double lambda = 0.05;
 int nsteps = 100;
@@ -356,6 +356,113 @@ void get_spectral_density()
 	free(res);
 }
 
+
+void get_spectral_density_improv()
+{
+    double val, ag, mag, bg, mbg;
+    double *res, rho, stat, sys;
+    mpfr_t estar, ec, tmp0, tmp1, e0;
+    FILE *sfp, *rfp;
+
+    mpfr_inits(estar, ec, tmp0, tmp1, e0, NULL);
+    mpfr_set_d(e0, emin, ROUNDING);
+    res = malloc(nms*sizeof(double));
+
+    if(res == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+
+    rfp = fopen_path("results.txt");
+    sfp = fopen_path("systematic.txt");
+
+    for(int n = 0; n < nsteps; n++)
+    {
+        mpfr_set_d(estar, ei+n*de, ROUNDING);
+        rho = 0;
+        mag = 0;
+        mbg = 0;
+        sys = 0;
+
+        printf("\rStarting step %d/%d", n+1, nsteps);
+        fflush(stdout);
+
+        for(int k = 0; k < nms; k++)
+        {
+            bootstrap_sample();
+            
+            rm_method_cosh_improv(e0, estar, cov);
+            // rm_method_cosh(e0, estar, cov);
+
+            transform_second_iter(corr, &val);
+            res[k] = val;
+            rho += val;
+
+            mag += ag;
+            mbg += bg;
+
+            mpfr_set(ec, estar, ROUNDING);
+            if(kid == 3)
+            {
+                mpfr_add_d(ec, ec, sigma, ROUNDING);
+            }
+
+            deltabar(tmp0, ec);
+            delta(tmp1, estar, ec);
+            mpfr_sub(tmp0, tmp0, tmp1, ROUNDING);
+            mpfr_div(tmp0, tmp0, tmp1, ROUNDING);
+
+            val = mpfr_get_d(tmp0, ROUNDING);
+            val = fabs(val * res[k]);
+            sys += val;
+        }
+
+        rho /= nms;
+        mag /= nms;
+        mbg /= nms;
+        sys *= 0.6827;
+        sys /= nms;
+        stat = 0;
+
+        if(nms > 1)
+        {
+            for(int k = 0; k < nms; k++)
+            {
+                stat += (res[k]-rho)*(res[k]-rho);
+            }
+            stat /= (nms-1);
+            stat = sqrt(stat);
+        }
+
+        fprintf(rfp, "%1.8e %1.8e %1.8e %1.8e %1.8e %1.8e\n",
+                    ei+n*de, rho, stat, sys, sqrt(stat*stat+sys*sys), mag+mbg);
+
+        full_sample();
+        rm_method_cosh(e0, estar, cov);
+
+        for(int k = 0; k < nsteps; k++)
+        {
+            mpfr_set_d(ec, ei+k*de, ROUNDING);
+            deltabar(tmp0, ec);
+            delta(tmp1, estar, ec);
+            fprintf(sfp, "%1.8e %1.8e %1.8e %1.8e\n",
+                        ei+n*de, ei+k*de, mpfr_get_d(tmp1, ROUNDING),
+                        mpfr_get_d(tmp0, ROUNDING));
+        }
+
+        fflush(sfp);
+        fflush(rfp);
+    }
+
+    fclose(rfp);
+    fclose(sfp);
+
+    printf("\n");
+    mpfr_clears(estar, ec, tmp0, tmp1, e0, NULL);
+    free(res);
+}
+
+
 void scan_lambda()
 {
     double val, ag, bg, dl, lstar, wg;
@@ -512,7 +619,8 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		get_spectral_density();
+		get_spectral_density_improv();
+        //get_spectral_density();
 	}
 
 	return 0;
