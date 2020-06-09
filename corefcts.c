@@ -720,7 +720,6 @@ void transform_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *
 
     int_delta_sq(term, estar, e0);
     mpfr_add(asum, asum, term, ROUNDING);
-    mpfr_mul(asum, asum, clambdap, ROUNDING);
 
     *rho = mpfr_get_d(sum, ROUNDING);
     *ag = mpfr_get_d(asum, ROUNDING);
