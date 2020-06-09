@@ -21,6 +21,7 @@ int prec = 128;
 double emin = 0.0;
 double escan = 0.0;
 int kid = -1;
+int iter = 0;
 
 mpfr_t *corr, *cov;
 mpfr_t *expected;
@@ -376,8 +377,8 @@ void get_spectral_density_improv()
         error("Failed to allocate auxiliary array");
     }
 
-    rfp = fopen_path("results.txt");
-    sfp = fopen_path("systematic.txt");
+    rfp = fopen_path("results_lvl1.txt");
+    sfp = fopen_path("systematic_lvl1.txt");
 
     for(int n = 0; n < nsteps; n++)
     {
@@ -506,7 +507,7 @@ void scan_lambda()
 }
 
 
-void scan_lambda_iter()
+void scan_lambda_lvl1()
 {
     double val, ag, bg, dl, lstar, wg, ll;
     mpfr_t estar, e0;
@@ -515,6 +516,7 @@ void scan_lambda_iter()
     fp = fopen_path("lambda_lvl_1.txt");
 
     mpfr_inits(e0, estar, NULL);
+    
     mpfr_set_d(e0, emin, ROUNDING);
     mpfr_set_d(estar, escan, ROUNDING);
     
@@ -526,7 +528,7 @@ void scan_lambda_iter()
     
         wg = 0;
 
-    for(double l = dl; l < 0.5+dl; l += dl)
+    for(double l = dl; l < 1+dl; l += dl)
     {
         set_params(sigma, lambdastar, kid, l);
         rm_method_cosh_lvl1(e0, estar, cov);
@@ -563,6 +565,7 @@ void prepare_path()
 	fprintf(fp, "file   = %s\n", file);
 	fprintf(fp, "prec   = %d\n", prec);
 	fprintf(fp, "lambda = %lg\n", lambda);
+    fprintf(fp, "lambdap = %lg\n", lambdap);
 	fprintf(fp, "sigma  = %lg\n", sigma);
 	fprintf(fp, "ei     = %lg\n", ei);
 	fprintf(fp, "ef     = %lg\n", ef);
@@ -576,13 +579,14 @@ void allocate_data()
 {
 	int count;
 
-	count = 2*tmx+tmx*nms;
+	count = 4*tmx+2*tmx*nms;
 	corr = malloc(count*sizeof(mpfr_t));
 	cov = corr+tmx;
 	mcorr = cov+tmx;
-    mass = malloc((count+tmx)*sizeof(mpfr_t));
-    bmass = malloc(count*sizeof(mpfr_t));
-    deltam = malloc(count*sizeof(mpfr_t));
+    
+    mass = mcorr+tmx*nms;
+    bmass = mass+tmx*nms;
+    deltam = bmass+tmx;
 
 	if(corr == NULL)
 	{
@@ -592,11 +596,6 @@ void allocate_data()
 	for(int i = 0; i < count; i++)
 	{
 		mpfr_init(corr[i]);
-        mpfr_init(bmass[i]);
-        mpfr_init(mass[i]);
-        mpfr_init(mcorr[i]);
-        mpfr_init(cov[i]);
-        mpfr_init(deltam[i]);
 	}
     
  
@@ -629,6 +628,7 @@ int main(int argc, char *argv[])
 		printf("  -nsteps  <int>     number of steps used in the energy range (default %d)\n", nsteps);
 		printf("  -emin    <float>   lower limit for integration over energy (default %1.6f)\n", emin);
 		printf("  -scan    <float>   perform a scan in lambda at the specified energy (not default)\n");
+        printf("  -iter  <int>       enter 1 for an extra iteration (not default)\n");
 		printf("\n");
 		printf("Kernels:\n");
 		printf("  0        Gaussian\n");
@@ -647,6 +647,7 @@ int main(int argc, char *argv[])
 	find_int(argc, argv, "-prec", &prec);
 	find_dbl(argc, argv, "-emin", &emin);
 	find_dbl(argc, argv, "-scan", &escan);
+    find_int(argc, argv, "-iter", &iter);
 
 	srand48(1337);
 	mpfr_set_default_prec(3.322*prec);
@@ -660,16 +661,33 @@ int main(int argc, char *argv[])
 	read_corr();
         effective_mass();
 
-	if(escan)
-	{
-		scan_lambda();
-        	scan_lambda_iter();
-	}
-	else
-	{
-		get_spectral_density_improv();
-       		//get_spectral_density();
-	}
+    if (iter)
+    {
+        if(escan)
+        {
+            scan_lambda();
+            scan_lambda_lvl1();
+        }
+        else
+        {
+            get_spectral_density_improv();
+            get_spectral_density();
+        }
+    }
+    else
+    {
+        if(escan)
+        {
+            scan_lambda();
+        }
+        else
+        {
+            get_spectral_density();
+        }
+        
+    }
+    
+	
 
 	return 0;
 }
