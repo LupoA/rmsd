@@ -4,7 +4,7 @@
 #include "corefcts.h"
 #include "kernels.h"
 #include "utils.h"
-// impro
+
 #define CORR_EXP  0x01
 #define CORR_COSH 0x02
 
@@ -451,163 +451,59 @@ void rm_method_cosh(mpfr_t e0, mpfr_t estar, mpfr_t *cov)
 
 void rm_method_cosh_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *cov)
 {
-    int *mutate, n, *indx;
-    mpfr_t tmp, x0, x1;
-
+    int *indx, n;
     type = CORR_COSH;
     n = tlen;
-
-    mpfr_inits(tmp, x0, x1, NULL);
-    mutate = malloc(n*sizeof(int));
-    if(mutate == NULL)
-    {
-        error("Unable to allocate auxiliary array");
-    }
+    mpfr_t tmp;
     
     indx = malloc(n*sizeof(int));
     if(indx == NULL)
     {
         error("Unable to allocate auxiliary array");
     }
-
     
+    mpfr_inits(tmp, NULL);
+    
+    rm_method_cosh(e0, estar, cov);
     
     for(int i = 0; i < n; i++)
     {
-        mpfr_set_d(tmp, (double)(i+tmin), ROUNDING);
-        int_delta(x0, tmp, estar, e0);
-        mpfr_set_d(tmp, (double)(tmax-i-tmin), ROUNDING);
-        int_delta(x1, tmp, estar, e0);
-        mpfr_add(f[i], x0, x1, ROUNDING);
-        mpfr_mul(f[i], f[i], clambda, ROUNDING);
-
-
-        if(inorm)
+        for(int j = 0; j < n; j++)
         {
-            mpfr_set_d(x0, (double)(i+tmin), ROUNDING);
-            mpfr_d_div(x0, 1.0, x0, ROUNDING);
-            mpfr_set_d(x1, (double)(tmax-i-tmin), ROUNDING);
-            mpfr_d_div(x1, 1.0, x1, ROUNDING);
-            mpfr_add(r[i], x0, x1, ROUNDING);
+            mpfr_div(wprime[j*n+i], ws[j*n+i], clambda, ROUNDING);
+            mpfr_div(wprime[i*n+j], ws[i*n+j], clambda, ROUNDING);
+            mpfr_mul(wprime[j*n+i], ws[j*n+i], clambdap, ROUNDING);
+            mpfr_mul(wprime[i*n+j], ws[i*n+j], clambdap, ROUNDING);
         }
-
-        for(int j = i; j < n; j++)
-        {
-            mpfr_set_d(tmp, (double)(i+j+2*tmin), ROUNDING);
-            mpfr_mul(x0, e0, tmp, ROUNDING);
-            mpfr_neg(x0, x0, ROUNDING);
-            mpfr_exp(x0, x0, ROUNDING);
-            mpfr_div(x0, x0, tmp, ROUNDING);
-            mpfr_set(x1, x0, ROUNDING);
-
-            mpfr_set_d(tmp, (double)(tmax+i-j), ROUNDING);
-            mpfr_mul(x0, e0, tmp, ROUNDING);
-            mpfr_neg(x0, x0, ROUNDING);
-            mpfr_exp(x0, x0, ROUNDING);
-            mpfr_div(x0, x0, tmp, ROUNDING);
-            mpfr_add(x1, x1, x0, ROUNDING);
-
-            mpfr_set_d(tmp, (double)(tmax-i+j), ROUNDING);
-            mpfr_mul(x0, e0, tmp, ROUNDING);
-            mpfr_neg(x0, x0, ROUNDING);
-            mpfr_exp(x0, x0, ROUNDING);
-            mpfr_div(x0, x0, tmp, ROUNDING);
-            mpfr_add(x1, x1, x0, ROUNDING);
-
-            mpfr_set_d(tmp, (double)(2*tmax-i-j-2*tmin), ROUNDING);
-            mpfr_mul(x0, e0, tmp, ROUNDING);
-            mpfr_neg(x0, x0, ROUNDING);
-            mpfr_exp(x0, x0, ROUNDING);
-            mpfr_div(x0, x0, tmp, ROUNDING);
-            mpfr_add(x1, x1, x0, ROUNDING);
-
-            mpfr_set(wprime[j*n+i], x1, ROUNDING);
-            mpfr_set(wprime[i*n+j], x1, ROUNDING);
-            mpfr_mul(wprime[j*n+i], wprime[j*n+i], clambdap, ROUNDING);
-            mpfr_mul(wprime[i*n+j], wprime[i*n+j], clambdap, ROUNDING);
-            
-            mpfr_mul(x1, x1, clambda, ROUNDING);
-            mpfr_set(w[j*n+i], x1, ROUNDING);
-            mpfr_set(w[i*n+j], x1, ROUNDING);
-            
-            mpfr_set(ws[j*n+i], x1, ROUNDING);
-            mpfr_set(ws[i*n+j], x1, ROUNDING);
-        }
-
-        
-        mpfr_mul(tmp, cov[i+tmin], lambda, ROUNDING);
-        mpfr_add(w[i*n+i], w[i*n+i], tmp, ROUNDING);
-        
         mpfr_mul(tmp, cov[i+tmin], lambdap, ROUNDING);
         mpfr_add(wprime[i*n+i], wprime[i*n+i], tmp, ROUNDING);
         
         
     }
-
-
-    ludcmp(n, w, mutate);
-    lubksb(n, w, wf, f, mutate);
+        
     
-    ludcmp(n, wprime, indx);
-
-
-    if(inorm)
-    {
-        lubksb(n, w, wr, r, mutate);
-
-        mpfr_set_d(x0, 1.0, ROUNDING);
-        mpfr_set_d(x1, 0.0, ROUNDING);
-
-        for(int i = 0; i < n; i++)
-        {
-            mpfr_mul(tmp, r[i], wf[i], ROUNDING);
-            mpfr_sub(x0, x0, tmp, ROUNDING);
-            mpfr_mul(tmp, r[i], wr[i], ROUNDING);
-            mpfr_add(x1, x1, tmp, ROUNDING);
-        }
-
-        mpfr_div(x0, x0, x1, ROUNDING);
-    }
-    
+        
     for(int i = 0; i < n; i++)
     {
-        if(inorm)
-        {
-            mpfr_mul(g[i], wr[i], x0, ROUNDING);
-            mpfr_add(g[i], g[i], wf[i], ROUNDING);
-        }
-        else
-        {
-             mpfr_set(g[i], wf[i], ROUNDING);
-        }
-    }
-   
-    for (int i = 0; i < n; i++)
-    {
         mpfr_set_zero(fprime[i], 1);
-    }
-   
-    for(int i = 0; i < n; i++) // f-term for the second iteration
-    {
+        
         for(int j = 0; j < n; j++)
         {
             mpfr_mul(tmp, ws[i*n+j], g[j], ROUNDING);
             mpfr_add(fprime[i], fprime[i], tmp, ROUNDING);
         }
-
         mpfr_sub(fprime[i], f[i], fprime[i], ROUNDING);
         mpfr_div(fprime[i], fprime[i], clambda, ROUNDING);
         mpfr_mul(fprime[i], fprime[i], clambdap, ROUNDING);
     }
     
-     
+    ludcmp(n, wprime, indx);
     lubksb(n, wprime, gp, fprime, indx);
-
-
-    mpfr_clears(tmp, x0, x1, NULL);
-    free(mutate);
+        
+                            
+    mpfr_clears(tmp, NULL);
+    free(indx);
 }
-
 
 
 void transform(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *rho, double *ag, double *bg)
@@ -669,22 +565,22 @@ void transform_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *
 
     for(int i = 0; i < n; i++)
     {
-        mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
-        mpfr_add(sum, sum, term, ROUNDING);
+      //  mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
+      //  mpfr_add(sum, sum, term, ROUNDING);
         
-    //    mpfr_mul(tmp, g[i], corr[i+tmin], ROUNDING);
-    //    mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
-    //    mpfr_add(term, tmp, term, ROUNDING);
-    //    mpfr_add(sum, sum, term, ROUNDING);
+        mpfr_mul(tmp, g[i], corr[i+tmin], ROUNDING); // g0 + g1
+        mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
+        mpfr_add(term, tmp, term, ROUNDING);
+        mpfr_add(sum, sum, term, ROUNDING);
 
-        mpfr_mul(term, g[i], f[i], ROUNDING);
+        mpfr_mul(term, g[i], f[i], ROUNDING);	// -2 f g0
         mpfr_div(term, term, clambda, ROUNDING);
-        mpfr_mul_d(term, term, -2.0, ROUNDING);  // -2 f g0
+        mpfr_mul_d(term, term, -2.0, ROUNDING);  
         mpfr_add(asum, asum, term, ROUNDING);
         
-        mpfr_mul(term, gp[i], f[i], ROUNDING);
+        mpfr_mul(term, gp[i], f[i], ROUNDING);	// -2 f g1
         mpfr_div(term, term, clambda, ROUNDING);
-        mpfr_mul_d(term, term, -2.0, ROUNDING); // -2 f g1
+        mpfr_mul_d(term, term, -2.0, ROUNDING); 
         mpfr_add(asum, asum, term, ROUNDING);
 
         for(int j = 0; j < n; j++)
@@ -716,10 +612,12 @@ void transform_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *
         mpfr_add(bsum, bsum, term, ROUNDING);
     }
     
-    mpfr_mul(asum, asum, clambdap, ROUNDING);
-
     int_delta_sq(term, estar, e0);
     mpfr_add(asum, asum, term, ROUNDING);
+    
+    mpfr_mul(asum, asum, clambdap, ROUNDING);
+
+    
 
     *rho = mpfr_get_d(sum, ROUNDING);
     *ag = mpfr_get_d(asum, ROUNDING);
@@ -815,18 +713,8 @@ void set_time_parms(int ta, int tb, int tc)
 		free(g);
 	}
     
-    if(gp)
-    {
-        nmx = (2*mlen+5)*mlen;
-        for(int i = 0; i < nmx; i++)
-        {
-            mpfr_clear(gp[i]);
-        }
-        free(gp);
-    }
 
-//	nmx = (2*len+5)*len;
-    nmx = (6*len+8)*len;
+    nmx = (3*len+7)*len;
 	g = malloc(nmx*sizeof(mpfr_t));
 	if(g == NULL)
 	{
@@ -838,12 +726,12 @@ void set_time_parms(int ta, int tb, int tc)
 	wr = r+len;
 	f = wr+len;
 	wf = f+len;
-    w = wf+len*len;
+    w = wf+len;
 	ws = w+len*len;
     
-    fprime = ws+len;
-    wprime = fprime+len*len;
-    gp = wprime+len;
+    fprime = ws+len*len;
+    wprime = fprime+len;
+    gp = wprime+len*len;
 
 
 	for(int i = 0; i < nmx; i++)
