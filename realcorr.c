@@ -10,6 +10,8 @@
 // imp
 double sigma = 0.1;
 double lambda = 0.05;
+double lambdap = 0.05;
+double lambdastar = 0.05;
 int nsteps = 100;
 double ei = 0.0;
 double ef = 1.0;
@@ -24,6 +26,7 @@ mpfr_t *corr, *cov;
 mpfr_t *expected;
 mpfr_t *mcorr;
 mpfr_t *mass, *bmass, *deltam;
+
 
 char path[128];
 char file[128];
@@ -391,10 +394,8 @@ void get_spectral_density_improv()
         {
             bootstrap_sample();
             
-            rm_method_cosh_improv(e0, estar, cov);
-            // rm_method_cosh(e0, estar, cov);
-
-            transform_second_iter(corr, &val);
+            rm_method_cosh_lvl1(e0, estar, cov);
+            transform_lvl1(e0, estar, corr, cov, &val, &ag, &bg);
             res[k] = val;
             rho += val;
 
@@ -465,7 +466,7 @@ void get_spectral_density_improv()
 
 void scan_lambda()
 {
-    double val, ag, bg, dl, lstar, wg;
+    double val, ag, bg, dl, lstar, wg, ll;
 	mpfr_t estar, e0;
 	FILE *fp;
 
@@ -475,7 +476,9 @@ void scan_lambda()
 	mpfr_set_d(e0, emin, ROUNDING);
 	mpfr_set_d(estar, escan, ROUNDING);
     
-        dl = 0.001;
+    ll = 0;
+    
+    dl = 0.001;
 
 	full_sample();
 	
@@ -483,7 +486,7 @@ void scan_lambda()
 
 	for(double l = dl; l < 0.5+dl; l += dl)
 	{
-		set_params(sigma, l, kid);
+		set_params(sigma, l, kid, ll);
 		rm_method_cosh(e0, estar, cov);
 		transform(e0, estar, corr, cov, &val, &ag, &bg);
        	        if (ag+bg > wg) {
@@ -492,12 +495,55 @@ void scan_lambda()
         	}
 		fprintf(fp, "%1.8e %1.8e %1.8e %1.8e\n", l, ag, bg, ag+bg);
         
+        
 	}
 	
-        printf("Suggested choice for lambda: %1.8e\n", lstar);
+        printf("Suggested choice for lambda (lvl 0): %1.8e\n", lstar);
+        lambdastar = lstar;
 	
 	mpfr_clears(e0, estar, NULL);
 	fclose(fp);
+}
+
+
+void scan_lambda_iter()
+{
+    double val, ag, bg, dl, lstar, wg, ll;
+    mpfr_t estar, e0;
+    FILE *fp;
+
+    fp = fopen_path("lambda_lvl_1.txt");
+
+    mpfr_inits(e0, estar, NULL);
+    mpfr_set_d(e0, emin, ROUNDING);
+    mpfr_set_d(estar, escan, ROUNDING);
+    
+    lstar = 0.31415926;
+    ll = 0;
+    dl = 0.001;
+
+    full_sample();
+    
+        wg = 0;
+
+    for(double l = dl; l < 0.5+dl; l += dl)
+    {
+        set_params(sigma, lambdastar, kid, l);
+        rm_method_cosh_lvl1(e0, estar, cov);
+        transform_lvl1(e0, estar, corr, cov, &val, &ag, &bg);
+            if (ag+bg > wg)
+            {
+                wg = ag+bg;
+                lstar = l;
+            }
+        fprintf(fp, "%1.8e %1.8e %1.8e %1.8e\n", l, ag, bg, ag+bg);
+        
+    }
+    
+        printf("Suggested choice for lambda (lvl 1): %1.8e\n", lstar);
+    
+    mpfr_clears(e0, estar, NULL);
+    fclose(fp);
 }
 
 void prepare_path()
@@ -575,6 +621,7 @@ int main(int argc, char *argv[])
 		printf("  -nms     <int>     number of measurements\n");
 		printf("  -file    <string>  path for reading the correlator data\n");
 		printf("  -lambda  <float>   trade-off parameter (default %1.6f)\n", lambda);
+        printf("  -lambdap  <float>   level 1 trade-off parameter (default %1.6f)\n", lambdap);
 		printf("  -sigma   <float>   width for smearing function (default %1.6f)\n", sigma);
 		printf("  -prec    <int>     working precision (default %d decimal places)\n", prec);
 		printf("  -ei      <float>   start of energy range for spectral density (default %1.6f)\n", ei);
@@ -593,7 +640,7 @@ int main(int argc, char *argv[])
 
 	find_dbl(argc, argv, "-sigma", &sigma);
 	find_dbl(argc, argv, "-lambda", &lambda);
-
+    find_dbl(argc, argv, "-lambdap", &lambdap);
 	find_dbl(argc, argv, "-ei", &ei);
 	find_dbl(argc, argv, "-ef", &ef);
 	find_int(argc, argv, "-nsteps", &nsteps);
@@ -605,7 +652,7 @@ int main(int argc, char *argv[])
 	mpfr_set_default_prec(3.322*prec);
 
 	de = (ef-ei)/nsteps;
-	set_params(sigma, lambda, kid);
+	set_params(sigma, lambda, kid, lambdap);
 	set_time_parms(1, tmx/2, tmx);
 
 	prepare_path();
@@ -616,11 +663,12 @@ int main(int argc, char *argv[])
 	if(escan)
 	{
 		scan_lambda();
+        	scan_lambda_iter();
 	}
 	else
 	{
 		get_spectral_density_improv();
-        //get_spectral_density();
+       		//get_spectral_density();
 	}
 
 	return 0;
