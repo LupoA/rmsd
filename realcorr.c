@@ -22,6 +22,8 @@ double emin = 0.0;
 double escan = 0.0;
 int kid = -1;
 int iter = 0;
+int getmass = 0;
+
 
 mpfr_t *corr, *cov;
 mpfr_t *expected;
