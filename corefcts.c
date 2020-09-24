@@ -4,7 +4,7 @@
 #include "corefcts.h"
 #include "kernels.h"
 #include "utils.h"
-
+// impro
 #define CORR_EXP  0x01
 #define CORR_COSH 0x02
 
@@ -147,6 +147,9 @@ void delta(mpfr_t res, mpfr_t estar, mpfr_t omega)
 		case 3:
 			delta3(res, estar, omega);
 			break;
+        case 4:
+            delta4(res, estar, omega);
+            break;
 	}
 }
 
@@ -166,6 +169,9 @@ void int_delta_sq(mpfr_t res, mpfr_t estar, mpfr_t e0)
 		case 3:
 			int_delta3_sq(res, estar, e0);
 			break;
+        case 4:
+            int_delta4_sq(res, estar, e0);
+            break;
 	}
 }
 
@@ -185,6 +191,9 @@ void int_delta(mpfr_t res, mpfr_t theta, mpfr_t estar, mpfr_t e0)
 		case 3:
 			int_delta3(res, theta, estar, e0);
 			break;
+        case 4:
+            int_delta4(res, theta, estar, e0);
+            break;
 	}
 }
 
@@ -466,6 +475,8 @@ void rm_method_cosh_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *cov)
     
     rm_method_cosh(e0, estar, cov);
     
+   
+    
     for(int i = 0; i < n; i++)
     {
         for(int j = 0; j < n; j++)
@@ -565,22 +576,22 @@ void transform_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *
 
     for(int i = 0; i < n; i++)
     {
-      //  mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
-      //  mpfr_add(sum, sum, term, ROUNDING);
+     //   mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
+     //   mpfr_add(sum, sum, term, ROUNDING);
         
-        mpfr_mul(tmp, g[i], corr[i+tmin], ROUNDING); // g0 + g1
+        mpfr_mul(tmp, g[i], corr[i+tmin], ROUNDING);
         mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
         mpfr_add(term, tmp, term, ROUNDING);
         mpfr_add(sum, sum, term, ROUNDING);
 
-        mpfr_mul(term, g[i], f[i], ROUNDING);	// -2 f g0
+        mpfr_mul(term, g[i], f[i], ROUNDING);
         mpfr_div(term, term, clambda, ROUNDING);
-        mpfr_mul_d(term, term, -2.0, ROUNDING);  
+        mpfr_mul_d(term, term, -2.0, ROUNDING);  // -2 f g0
         mpfr_add(asum, asum, term, ROUNDING);
         
-        mpfr_mul(term, gp[i], f[i], ROUNDING);	// -2 f g1
+        mpfr_mul(term, gp[i], f[i], ROUNDING);
         mpfr_div(term, term, clambda, ROUNDING);
-        mpfr_mul_d(term, term, -2.0, ROUNDING); 
+        mpfr_mul_d(term, term, -2.0, ROUNDING); // -2 f g1
         mpfr_add(asum, asum, term, ROUNDING);
 
         for(int j = 0; j < n; j++)
@@ -626,6 +637,29 @@ void transform_lvl1(mpfr_t e0, mpfr_t estar, mpfr_t *corr, mpfr_t *cov, double *
     mpfr_clears(term, sum, asum, bsum, tmp, NULL);
 }
 
+void transform_only_step1(mpfr_t *corr, double *rho)
+{
+    mpfr_t term, sum;
+    int n;
+
+    mpfr_inits(term, sum, NULL);
+    mpfr_set_zero(sum, 1);
+
+    n = tlen;
+
+    for(int i = 0; i < n; i++)
+    {
+        mpfr_mul(term, gp[i], corr[i+tmin], ROUNDING);
+        mpfr_add(sum, sum, term, ROUNDING);
+    }
+        
+    *rho = mpfr_get_d(sum, ROUNDING);
+
+    mpfr_clears(term, sum, NULL);
+}
+
+
+
 
 void deltabar(mpfr_t sum, mpfr_t e)
 {
@@ -655,6 +689,36 @@ void deltabar(mpfr_t sum, mpfr_t e)
 	mpfr_clear(term);
 }
 
+void deltabar_lvl1(mpfr_t sum, mpfr_t e)
+{
+    mpfr_t term;
+    int n;
+
+    mpfr_init(term);
+    mpfr_set_zero(sum, 1);
+    n = tlen;
+
+    for(int i = 0; i < n; i++)
+    {
+        mpfr_mul_d(term, e, (double)(-i-tmin), ROUNDING);
+        mpfr_exp(term, term, ROUNDING);
+        mpfr_mul(term, term, gp[i], ROUNDING);
+        mpfr_add(sum, sum, term, ROUNDING);
+
+        if(type == CORR_COSH)
+        {
+            mpfr_mul_d(term, e, (double)(-tmax+i+tmin), ROUNDING);
+            mpfr_exp(term, term, ROUNDING);
+            mpfr_mul(term, term, gp[i], ROUNDING);
+            mpfr_add(sum, sum, term, ROUNDING);
+        }
+    }
+
+    mpfr_clear(term);
+}
+
+
+
 void set_params(double s, double l, int k, double ll)
 {
 	static int init = 0;
@@ -666,7 +730,7 @@ void set_params(double s, double l, int k, double ll)
 		init = 1;
 	}
 
-	if(k < 0 || k > 3)
+	if(k < 0 || k > 4)
 	{
 		error("Invalid smearing kernel");
 	}
@@ -716,6 +780,7 @@ void set_time_parms(int ta, int tb, int tc)
 
     nmx = (3*len+7)*len;
 	g = malloc(nmx*sizeof(mpfr_t));
+    
 	if(g == NULL)
 	{
 		error("Failed to allocate MPFR variables");
