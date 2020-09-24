@@ -10,6 +10,8 @@
 
 double sigma = 0.1;
 double lambda = 0.05;
+double lambdap = 0.05;
+double lambdastar = 0.05;
 int nsteps = 100;
 double ei = 0.0;
 double ef = 1.0;
@@ -17,10 +19,12 @@ int tmx = 0;
 int nms = 1;
 int prec = 128;
 double emin = 0.0;
+double eminp = 0.8;
 double escan = 0.0;
 int sym = 0;
 int L = 32;
 int kid = -1;
+double *ro1, *deltazero;
 
 mpfr_t *corr, *cov;
 mpfr_t *expected;
@@ -402,7 +406,7 @@ void bootstrap_sample()
 
 void get_spectral_density()
 {
-	double val, ag, mag, bg, mbg;
+	double val, ag, mag, bg, mbg, diff;
 	double *res, rho, stat, sys;
 	mpfr_t estar, ec, tmp0, tmp1, e0;
 	FILE *sfp, *rfp;
@@ -458,14 +462,17 @@ void get_spectral_density()
 			deltabar(tmp0, ec);
 			delta(tmp1, estar, ec);
 			mpfr_sub(tmp0, tmp0, tmp1, ROUNDING);
+            diff = mpfr_get_d(tmp0, ROUNDING); // Deltabar-Delta
 			mpfr_div(tmp0, tmp0, tmp1, ROUNDING);
 
 			val = mpfr_get_d(tmp0, ROUNDING);
 			val = fabs(val * res[k]);
 			sys += val;
-		}
+            deltazero[n] += diff;
+		} //nms
 
 		rho /= nms;
+        deltazero[n] /= nms;
 		mag /= nms;
 		mbg /= nms;
 		sys *= 0.6827;
@@ -485,6 +492,7 @@ void get_spectral_density()
 		fprintf(rfp, "%1.8e %1.8e %1.8e %1.8e %1.8e %1.8e %1.8e\n",
 					ei+n*de, mpfr_get_d(expected[n], ROUNDING), rho,
 					stat, sys, sqrt(stat*stat+sys*sys), mag+mbg);
+
 
 		full_sample();
 
@@ -519,9 +527,137 @@ void get_spectral_density()
 	free(res);
 }
 
+void get_spectral_denity_improv()
+{
+    double val, ag, mag, bg, mbg, diff;
+    double *res, rho, stat, sys, *specbis, rhobis, valbis;
+    mpfr_t estar, ec, tmp0, tmp1, e0;
+    FILE *sfp, *rfp;
+
+    mpfr_inits(estar, ec, tmp0, tmp1, e0, NULL);
+    mpfr_set_d(e0, emin, ROUNDING);     //
+    res = malloc(nms*sizeof(double));
+
+    if(res == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    specbis = malloc(nms*sizeof(double));
+
+    if(specbis == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+
+    rfp = fopen_path("results_lvl1.txt");
+    sfp = fopen_path("systematic_lvl1.txt");
+
+    for(int n = 0; n < nsteps; n++)
+    {
+        mpfr_set_d(estar, ei+n*de, ROUNDING);   //
+        rho = 0;
+        mag = 0;
+        mbg = 0;
+        sys = 0;
+        diff = 0;
+        rhobis = 0;
+
+        printf("\rStarting step %d/%d", n+1, nsteps);
+        fflush(stdout);
+
+        for(int k = 0; k < nms; k++)
+        {
+            bootstrap_sample();
+            
+            rm_method_cosh_lvl1(e0, estar, cov);
+            transform_lvl1(e0, estar, corr, cov, &val, &ag, &bg);
+            res[k] = val;
+            transform_only_step1(corr, &valbis);
+            specbis[k] = valbis;
+            rho += val;
+            rhobis += valbis;
+
+            mag += ag;
+            mbg += bg;
+
+            mpfr_set(ec, estar, ROUNDING);
+            if(kid == 3)
+            {
+                mpfr_add_d(ec, ec, sigma, ROUNDING);
+            }
+
+         /*   deltabar_lvl1(tmp0, ec);
+            diff = mpfr_get_d(tmp0, ROUNDING);
+            diff = diff-deltazero[n];
+            diff = diff/deltazero[n];
+            diff = fabs(diff*specbis[k]);
+            sys += diff; */
+            
+            deltabar_lvl1(tmp1, ec);
+            deltabar(tmp0, ec);
+            mpfr_add(tmp0, tmp0, tmp1, ROUNDING);
+            delta(tmp1, estar, ec);
+            mpfr_sub(tmp0, tmp1, tmp0, ROUNDING);
+            mpfr_div(tmp0, tmp0, tmp1, ROUNDING);
+            
+            diff = mpfr_get_d(tmp0, ROUNDING);
+            diff = fabs(diff);
+            diff = diff*(val+valbis);
+            
+            sys += diff;
+        }
+
+        rho /= nms;
+        rhobis /= nms;
+        mag /= nms;
+        mbg /= nms;
+        sys *= 0.6827;
+        sys /= nms;
+        stat = 0;
+
+        if(nms > 1)
+        {
+            for(int k = 0; k < nms; k++)
+            {
+                stat += (res[k]-rho)*(res[k]-rho);
+            }
+            stat /= (nms-1);
+            stat = sqrt(stat);
+        }
+
+        fprintf(rfp, "%1.8e %1.8e %1.8e %1.8e %1.8e %1.8e\n",
+                    ei+n*de, rho, stat, sys, sqrt(stat*stat+sys*sys), mag+mbg);     //
+
+        full_sample();
+        rm_method_cosh(e0, estar, cov);
+
+        for(int k = 0; k < nsteps; k++)
+        {
+            mpfr_set_d(ec, ei+k*de, ROUNDING);
+            deltabar_lvl1(tmp0, ec);
+            fprintf(sfp, "%1.8e %1.8e %1.8e %1.8e\n",
+                        ei+n*de, ei+k*de, deltazero[n+nsteps*k],    //
+                        mpfr_get_d(tmp0, ROUNDING));
+        }
+
+        fflush(sfp);
+        fflush(rfp);
+    }
+
+    fclose(rfp);
+    fclose(sfp);
+
+    printf("\n");
+    mpfr_clears(estar, ec, tmp0, tmp1, e0, NULL);
+    free(res);
+    free(specbis);
+}
+
+
 void scan_lambda()
 {
-	double val, ag, bg, dl;
+	double val, ag, bg, dl, lstar, wg;
 	mpfr_t estar, e0;
 	FILE *fp;
 
@@ -536,7 +672,7 @@ void scan_lambda()
 
 	for(double l = dl; l < 0.5+dl; l += dl)
 	{
-		set_params(sigma, l, kid);
+		set_params(sigma, l, kid, l);
 
 		if(sym)
 		{
@@ -548,12 +684,69 @@ void scan_lambda()
 		}
 
 		transform(e0, estar, corr, cov, &val, &ag, &bg);
+        if (ag+bg > wg) {
+                 wg = ag+bg;
+                     lstar = l;
+        }
 		fprintf(fp, "%1.8e %1.8e %1.8e %1.8e\n", l, ag, bg, ag+bg);
+        
 	}
+    printf("Suggested choice for lambda (lvl 0): %1.8e\n", lstar);
 
 	mpfr_clears(e0, estar, NULL);
 	fclose(fp);
 }
+
+void scan_lambda_lvl1()
+{
+    double val, ag, bg, dl, lstar, wg, ll;
+    mpfr_t estar, e0;
+    FILE *fp;
+    
+    if(sym)
+    {
+    
+    fp = fopen_path("lambda_lvl_1.txt");
+
+    mpfr_inits(e0, estar, NULL);
+    
+    mpfr_set_d(e0, emin, ROUNDING);
+    mpfr_set_d(estar, escan, ROUNDING);
+    
+    lstar = 0.31415926;
+    ll = 0;
+    dl = 0.001;
+
+    full_sample();
+    
+        wg = 0;
+
+    for(double l = dl; l < 1+dl; l += dl)
+    {
+        set_params(sigma, lambdastar, kid, l);
+        rm_method_cosh_lvl1(e0, estar, cov);
+        transform_lvl1(e0, estar, corr, cov, &val, &ag, &bg);
+            if (ag+bg > wg)
+            {
+                wg = ag+bg;
+                lstar = l;
+            }
+        fprintf(fp, "%1.8e %1.8e %1.8e %1.8e\n", l, ag, bg, ag+bg);
+        
+    }
+    
+        printf("Suggested choice for lambda (lvl 1): %1.8e\n", lstar);
+    
+    mpfr_clears(e0, estar, NULL);
+    fclose(fp);
+    }
+    else
+    {
+        return;
+    }
+}
+
+
 
 void prepare_path()
 {
@@ -601,6 +794,21 @@ void allocate_data()
 	{
 		mpfr_init(corr[i]);
 	}
+    
+    ro1 = malloc(nsteps*sizeof(double));
+
+    if(ro1 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    deltazero = malloc(nsteps*sizeof(double));
+
+    if(deltazero == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
 }
 
 int main(int argc, char *argv[])
@@ -616,6 +824,7 @@ int main(int argc, char *argv[])
 		printf("  -T       <int>     temporal extent of correlator\n");
 		printf("  -nms     <int>     number of measurements\n");
 		printf("  -lambda  <float>   trade-off parameter (default %1.6f)\n", lambda);
+        printf("  -lambdap  <float>   level 1 trade-off parameter (default %1.6f)\n", lambdap);
 		printf("  -sigma   <float>   width for smearing function (default %1.6f)\n", sigma);
 		printf("  -prec    <int>     working precision (default %d decimal places)\n", prec);
 		printf("  -ei      <float>   start of energy range for spectral density (default %1.6f)\n", ei);
@@ -636,7 +845,7 @@ int main(int argc, char *argv[])
 
 	find_dbl(argc, argv, "-sigma", &sigma);
 	find_dbl(argc, argv, "-lambda", &lambda);
-
+    find_dbl(argc, argv, "-lambdap", &lambdap);
 	find_dbl(argc, argv, "-ei", &ei);
 	find_dbl(argc, argv, "-ef", &ef);
 	find_int(argc, argv, "-nsteps", &nsteps);
@@ -650,7 +859,7 @@ int main(int argc, char *argv[])
 	mpfr_set_default_prec(3.322*prec);
 
 	de = (ef-ei)/nsteps;
-	set_params(sigma, lambda, kid);
+	set_params(sigma, lambda, kid, lambda);
 
 	if(sym)
 	{
@@ -671,10 +880,12 @@ int main(int argc, char *argv[])
 	if(escan)
 	{
 		scan_lambda();
+        scan_lambda_lvl1();
 	}
 	else
 	{
 		get_spectral_density();
+        get_spectral_denity_improv();
 	}
 
 	return 0;
