@@ -22,12 +22,15 @@ double emin = 0.0;
 double escan = 0.0;
 int kid = -1;
 int iter = 0;
+double *bootrho0, *bootdeltarho0, *bootrho1, *bootdeltarho1;
+double *rho1, *rho0, *drho1, *drho0;
+int nfit = 0;
 int getmass = 0;
-
+int nboot = 40;
 
 mpfr_t *corr, *cov;
 mpfr_t *expected;
-mpfr_t *mcorr;
+mpfr_t *mcorr, *smcorr, *deltazero;
 mpfr_t *mass, *bmass, *deltam;
 
 
@@ -123,78 +126,177 @@ void bootstrap_sample()
 	free(rd);
 }
 
-void effective_mass()
+void sym_corr()
 {
-    FILE *fp;
+
+    int th = tmx/2;
+
     
+    for (int j=0; j<nms; j++)
+    {
+        mpfr_set(smcorr[j*(th+1)], mcorr[j*tmx], ROUNDING); // c(0) --> c(0)
+        mpfr_set(smcorr[j*(th+1)+th], mcorr[j*tmx+th], ROUNDING); // c(T/2) --> c(T/2)
+        for (int i=1; i<th; i++)
+        {
+            mpfr_add(smcorr[j*(th+1)+i], mcorr[j*tmx+i], mcorr[j*tmx+(tmx-i)], ROUNDING);   // c(1)=c(1)+c(31) ... c(T/2-1) = c(T/2-1)+c(T/2+1)
+            mpfr_div_d(smcorr[j*(th+1)+i], smcorr[j*(th+1)+i], (double)(2.), ROUNDING);
+        }
+    }
+    
+
+    
+}
+
+void bootstrap_symm_sample()
+{
     mpfr_t tmp;
+    int *rd, th;
+    th = tmx/2;
+
+    if(nms <= 1)
+    {
+        return;
+    }
+    
     mpfr_init(tmp);
-    mpfr_set_zero(tmp, 1);
-    
-    int *rd;
-    int thalfp=tmx/2+1;
-    
     rd = malloc(sizeof(int)*nms);
     randi(rd, nms, 0, nms);
 
-    for (int j = 0; j < nms; j++)
+    for(int i = 0; i < th+1; i++)
     {
-        for (int i = 1; i < thalfp; i++)
+        mpfr_set_zero(corr[i], 1);
+        for(int j = 0; j < nms; j++)
         {
-            mpfr_set_zero(tmp, 1);
-            mpfr_add(tmp, mcorr[j*tmx+i+1], mcorr[j*tmx+i-1], ROUNDING);
+            mpfr_add(corr[i], corr[i], smcorr[rd[j]*(th+1)+i], ROUNDING);
+        }
+        mpfr_div_d(corr[i], corr[i], (double)nms, ROUNDING);
 
-            mpfr_div(tmp, tmp, mcorr[j*tmx+i], ROUNDING);
-            
-            mpfr_div_d(tmp, tmp, (double)2, ROUNDING);
-            mpfr_acosh(mass[j*tmx+i], tmp, ROUNDING);
-            
-        }
-    }
-   
-    for(int i = 1; i < thalfp; i++)
-    {
-        mpfr_set_zero(bmass[i], 1);
+        mpfr_set_zero(cov[i], 1);
         for(int j = 0; j < nms; j++)
         {
-            mpfr_add(bmass[i], bmass[i], mass[rd[j]*tmx+i], ROUNDING);
-        }
-        mpfr_div_d(bmass[i], bmass[i], (double)nms, ROUNDING);
-    }
-    
-    
-    for(int i = 0; i < thalfp; i++)
-    {
-        mpfr_set_zero(bmass[i], 1);
-        for(int j = 0; j < nms; j++)
-        {
-            mpfr_add(bmass[i], bmass[i], mass[rd[j]*tmx+i], ROUNDING);
-        }
-        mpfr_div_d(bmass[i], bmass[i], (double)nms, ROUNDING);
-
-        mpfr_set_zero(deltam[i], 1);
-        for(int j = 0; j < nms; j++)
-        {
-            mpfr_sub(tmp, mass[rd[j]*tmx+i], bmass[i], ROUNDING);
+            mpfr_sub(tmp, smcorr[rd[j]*(th+1)+i], corr[i], ROUNDING);
             mpfr_mul(tmp, tmp, tmp, ROUNDING);
-            mpfr_add(deltam[i], deltam[i], tmp, ROUNDING);
+            mpfr_add(cov[i], cov[i], tmp, ROUNDING);
         }
-        mpfr_div_d(deltam[i], deltam[i], (double)(nms-1), ROUNDING);
-        mpfr_sqrt(deltam[i], deltam[i], ROUNDING);
-
+        mpfr_div_d(cov[i], cov[i], (double)(nms-1), ROUNDING);
+        mpfr_mul(tmp, corr[0], corr[0], ROUNDING);
+        mpfr_div(cov[i], cov[i], tmp, ROUNDING);
     }
+    
+    
+
+    mpfr_clear(tmp);
+    free(rd);
+}
+
+void bootmass()
+{
+    FILE *fp;
+    mpfr_t tmp;
+    
+    int th = tmx/2;
+    mpfr_init(tmp);
     
     fp = fopen_path("mass.txt");
     
-    for (int i = 1; i < thalfp; i++)
+    for (int j = 0; j < nms; j++)  // number of bootstrap samples = nms
     {
-        fprintf(fp, "%3d %1.8e %1.8e\n", i, mpfr_get_d(bmass[i], ROUNDING), mpfr_get_d(deltam[i], ROUNDING) );
+        bootstrap_symm_sample(); // fills corr[] with a bootstrapped symmetrised sample
+        //full_sample();
+        for (int i = 1; i < th; i++)
+        {
+            mpfr_add(tmp, corr[i+1], corr[i-1], ROUNDING);
+
+            mpfr_div(tmp, tmp, corr[i], ROUNDING);
+            
+            mpfr_div_d(tmp, tmp, (double)2, ROUNDING);
+            
+            mpfr_acosh(mass[j*(th-1)+i-1], tmp, ROUNDING); // I am shifting the masses so they start from m(0) instead of m(1)
+        }
+    }
+    
+    for (int i = 0; i < th-1; i++) //compute the mass
+    {
+        mpfr_set_zero(tmp, 1);
+        for (int j = 0; j < nms; j++)
+        {
+            mpfr_add(tmp, tmp, mass[j*(th-1)+i], ROUNDING);
+        }
+        mpfr_div_d(bmass[i], tmp, (double)(nms), ROUNDING); // mass computed as the average of the nms bootstrap samples
+    }
+    
+     for (int i = 0; i < th-1; i++)//compute error on the mass
+     {
+         mpfr_set_zero(deltam[i], 1);
+         for (int j = 0; j < nms; j++)
+        {
+             mpfr_sub(tmp, bmass[i], mass[j*(th-1)+i], ROUNDING);
+             mpfr_mul(tmp, tmp, tmp, ROUNDING);
+             mpfr_add(deltam[i], deltam[i], tmp, ROUNDING);
+        }
+         
+         mpfr_div_d(deltam[i], deltam[i], (double)(nms), ROUNDING);
+         mpfr_sqrt(deltam[i], deltam[i], ROUNDING);
+     }
+    // now print the mass. printing i+1 because I shifted the pointer to start from zero
+    for (int i = 0; i < th-1; i++)
+    {
+        fprintf(fp, "%2d %3.8e %3.8e\n", i+1, mpfr_get_d(bmass[i], ROUNDING), mpfr_get_d(deltam[i], ROUNDING));
     }
     
     fclose(fp);
     mpfr_clear(tmp);
-    free(rd);
 }
+
+void fitmass()
+{
+    char *end;
+    char buf[LINE_MAX];
+    mpfr_t mfit, deltamfit, tmp;
+    
+    mpfr_inits(mfit, deltamfit, tmp, NULL);
+    int th = tmx/2;
+    
+    printf("Enter number of points for linear fit, starting from the last\n");
+
+    
+    do
+    {
+         if (!fgets(buf, sizeof buf, stdin))
+            break;
+
+         buf[strlen(buf) - 1] = 0;
+
+         nfit = strtol(buf, &end, 10);
+    } while (end != buf + strlen(buf));
+    
+    
+    mpfr_set_zero(mfit, 1);
+
+    for(int i = th-1-nfit; i < th-1; i++)
+    {
+        mpfr_add(mfit, mfit, bmass[i], ROUNDING);
+    }
+    mpfr_div_d(mfit, mfit, (double)(nfit), ROUNDING);
+        
+    mpfr_set_zero(deltamfit, 1);
+    for(int i = th-1-nfit; i < th-1; i++)
+    {
+        mpfr_sub(tmp, mfit, bmass[i], ROUNDING);
+        mpfr_mul(tmp, tmp, tmp, ROUNDING);
+        mpfr_add(deltamfit, deltamfit, tmp, ROUNDING);
+    }
+    mpfr_div_d(deltamfit, deltamfit, (double)(nfit), ROUNDING);
+    mpfr_sqrt(deltamfit, deltamfit, ROUNDING);
+        
+    
+    printf("m = %3.8e ± %3.8e\n", mpfr_get_d(mfit, ROUNDING), mpfr_get_d(deltamfit, ROUNDING));
+    
+    
+    mpfr_clears(mfit, deltamfit, tmp, NULL);
+    
+}
+
 
 
 void read_corr()
@@ -202,8 +304,9 @@ void read_corr()
     double res, dres, norm;
     char *token;
     char *buf;
-    int offset;
-    FILE *fp;
+    int offset, th;
+    FILE *fp, *fs;
+    th = tmx/2;
 
     fp = fopen(file, "r");
     
@@ -245,9 +348,13 @@ void read_corr()
 
     fclose(fp);
     fp = fopen_path("correlator.txt");
-    bootstrap_sample();
+    //sym_corr();
+    //bootstrap_symm_sample();
+    //bootstrap_sample();
+    full_sample();
     norm = mpfr_get_d(corr[0], ROUNDING);
-
+    
+    
     for(int i = 0; i < tmx; i++)
     {
         res = mpfr_get_d(corr[i], ROUNDING);
@@ -257,17 +364,34 @@ void read_corr()
     }
 
     fclose(fp);
+    
+    fs = fopen_path("symm_corr.txt");
+    sym_corr();
+    bootstrap_symm_sample();
+    
+    for(int i = 0; i < th+1; i++)
+    {
+        res = mpfr_get_d(corr[i], ROUNDING);
+        dres = mpfr_get_d(cov[i], ROUNDING);
+        dres = norm*sqrt(dres);
+        fprintf(fs, "%3d %1.8e %1.8e\n", i, res, dres);
+    }
+    
+    fclose(fs);
     free(buf);
 }
+
+
+
 
 void get_spectral_density()
 {
 	double val, ag, mag, bg, mbg;
 	double *res, rho, stat, sys;
-	mpfr_t estar, ec, tmp0, tmp1, e0;
+	mpfr_t estar, ec, tmp0, tmp1, e0, difff;
 	FILE *sfp, *rfp;
 
-	mpfr_inits(estar, ec, tmp0, tmp1, e0, NULL);
+	mpfr_inits(estar, ec, tmp0, tmp1, e0, difff, NULL);
 	mpfr_set_d(e0, emin, ROUNDING);
 	res = malloc(nms*sizeof(double));
 
@@ -286,17 +410,20 @@ void get_spectral_density()
 		mag = 0;
 		mbg = 0;
 		sys = 0;
+        mpfr_set_zero(deltazero[n], 1);
 
 		printf("\rStarting step %d/%d", n+1, nsteps);
 		fflush(stdout);
 
 		for(int k = 0; k < nms; k++)
 		{
-			bootstrap_sample();
+			//bootstrap_sample();
+            bootstrap_symm_sample();
 			rm_method_cosh(e0, estar, cov);
 
 			transform(e0, estar, corr, cov, &val, &ag, &bg);
 			res[k] = val;
+            rho0[n+nsteps*k] = val;
 			rho += val;
 			mag += ag;
 			mbg += bg;
@@ -307,17 +434,24 @@ void get_spectral_density()
 				mpfr_add_d(ec, ec, sigma, ROUNDING);
 			}
 
-			deltabar(tmp0, ec);
-			delta(tmp1, estar, ec);
-			mpfr_sub(tmp0, tmp0, tmp1, ROUNDING);
-			mpfr_div(tmp0, tmp0, tmp1, ROUNDING);
+			deltabar(tmp1, ec);
+			delta(tmp0, estar, ec);
+			
+            mpfr_sub(tmp0, tmp1, tmp0, ROUNDING);   //deltabar-delta
+            mpfr_add(deltazero[n], deltazero[n], tmp0, ROUNDING); // NB the sign of this;
+		//	mpfr_div(tmp0, tmp0, tmp1, ROUNDING); //1 -delta\bardelta
+            delta(tmp1, estar, ec);
+            mpfr_div(tmp0, tmp0, tmp1, ROUNDING);      // 1 - deltabar\delta
 
 			val = mpfr_get_d(tmp0, ROUNDING);
 			val = fabs(val * res[k]);
+            drho0[n+nsteps*k] = val;
 			sys += val;
+            
 		}
 
 		rho /= nms;
+        mpfr_div_d(deltazero[n], deltazero[n], (double)(nms), ROUNDING);
 		mag /= nms;
 		mbg /= nms;
 		sys *= 0.6827;
@@ -337,7 +471,8 @@ void get_spectral_density()
 		fprintf(rfp, "%1.8e %1.8e %1.8e %1.8e %1.8e %1.8e\n",
 					ei+n*de, rho, stat, sys, sqrt(stat*stat+sys*sys), mag+mbg);
 
-		full_sample();
+		//bootstrap_sample();
+        bootstrap_symm_sample();
 		rm_method_cosh(e0, estar, cov);
 
 		for(int k = 0; k < nsteps; k++)
@@ -348,6 +483,7 @@ void get_spectral_density()
 			fprintf(sfp, "%1.8e %1.8e %1.8e %1.8e\n",
 						ei+n*de, ei+k*de, mpfr_get_d(tmp1, ROUNDING),
 						mpfr_get_d(tmp0, ROUNDING));
+
 		}
 
 		fflush(sfp);
@@ -365,8 +501,8 @@ void get_spectral_density()
 
 void get_spectral_density_improv()
 {
-    double val, ag, mag, bg, mbg;
-    double *res, rho, stat, sys;
+    double val, ag, mag, bg, mbg, diff;
+    double *res, rho, stat, sys, *resbis, rhobis, valbis;
     mpfr_t estar, ec, tmp0, tmp1, e0;
     FILE *sfp, *rfp;
 
@@ -378,6 +514,14 @@ void get_spectral_density_improv()
     {
         error("Failed to allocate auxiliary array");
     }
+    
+    resbis = malloc(nms*sizeof(double));
+    
+    if(resbis == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+
 
     rfp = fopen_path("results_lvl1.txt");
     sfp = fopen_path("systematic_lvl1.txt");
@@ -389,19 +533,27 @@ void get_spectral_density_improv()
         mag = 0;
         mbg = 0;
         sys = 0;
+        diff = 0;
+        rhobis = 0;
 
         printf("\rStarting step %d/%d", n+1, nsteps);
         fflush(stdout);
 
         for(int k = 0; k < nms; k++)
         {
-            bootstrap_sample();
+           // bootstrap_sample();
+            bootstrap_symm_sample();
             
             rm_method_cosh_lvl1(e0, estar, cov);
             transform_lvl1(e0, estar, corr, cov, &val, &ag, &bg);
             res[k] = val;
+            transform_only_step1(corr, &valbis);
+            resbis[k] = valbis;
+            
             rho += val;
-
+            rho1[n+nsteps*k] = val;
+            rhobis += valbis;
+            
             mag += ag;
             mbg += bg;
 
@@ -411,21 +563,35 @@ void get_spectral_density_improv()
                 mpfr_add_d(ec, ec, sigma, ROUNDING);
             }
 
+ 
+            
+            deltabar_lvl1(tmp1, ec);
             deltabar(tmp0, ec);
+            mpfr_add(tmp0, tmp0, tmp1, ROUNDING);
             delta(tmp1, estar, ec);
-            mpfr_sub(tmp0, tmp0, tmp1, ROUNDING);
+           // mpfr_sub(tmp1, tmp1, tmp0, ROUNDING);        // these gives bar quantities
+           // mpfr_div(tmp1, tmp1, tmp0, ROUNDING);     // in the denominator
+            mpfr_sub(tmp0, tmp1, tmp0, ROUNDING);
             mpfr_div(tmp0, tmp0, tmp1, ROUNDING);
-
-            val = mpfr_get_d(tmp0, ROUNDING);
-            val = fabs(val * res[k]);
-            sys += val;
+          //  diff = mpfr_get_d(tmp1, ROUNDING);
+            diff = mpfr_get_d(tmp0, ROUNDING);
+            diff = fabs(diff);
+            diff = diff*(val+valbis);
+            
+            drho1[n+nsteps*k] = diff;
+            
+            sys += diff;
+            
+            
         }
 
         rho /= nms;
+        rhobis /= nms;
         mag /= nms;
         mbg /= nms;
         sys *= 0.6827;
         sys /= nms;
+
         stat = 0;
 
         if(nms > 1)
@@ -441,16 +607,16 @@ void get_spectral_density_improv()
         fprintf(rfp, "%1.8e %1.8e %1.8e %1.8e %1.8e %1.8e\n",
                     ei+n*de, rho, stat, sys, sqrt(stat*stat+sys*sys), mag+mbg);
 
-        full_sample();
+        //bootstrap_sample();
+        bootstrap_symm_sample();
         rm_method_cosh(e0, estar, cov);
-
+        
         for(int k = 0; k < nsteps; k++)
         {
             mpfr_set_d(ec, ei+k*de, ROUNDING);
-            deltabar(tmp0, ec);
-            delta(tmp1, estar, ec);
+            deltabar_lvl1(tmp0, ec);
             fprintf(sfp, "%1.8e %1.8e %1.8e %1.8e\n",
-                        ei+n*de, ei+k*de, mpfr_get_d(tmp1, ROUNDING),
+                        ei+n*de, ei+k*de, mpfr_get_d(deltazero[k], ROUNDING),
                         mpfr_get_d(tmp0, ROUNDING));
         }
 
@@ -483,7 +649,6 @@ void scan_lambda()
     
     dl = 0.001;
 
-	full_sample();
 	
         wg = 0;
 
@@ -526,7 +691,6 @@ void scan_lambda_lvl1()
     ll = 0;
     dl = 0.001;
 
-    full_sample();
     
         wg = 0;
 
@@ -549,6 +713,199 @@ void scan_lambda_lvl1()
     mpfr_clears(e0, estar, NULL);
     fclose(fp);
 }
+
+
+void peak_bootstrap()
+{
+    double *peak, psum, *epeak, esum, dsum, tmp;
+    int *rd;
+    int counter, flag;
+    FILE *fp;
+
+    fp = fopen_path("PeakLocation.txt");
+    
+    peak = malloc(nms*sizeof(double));
+
+    if(peak == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    epeak = malloc(nms*sizeof(double));
+
+    if(epeak == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    dsum = 0;
+    counter = 0;
+    psum = 0;
+    esum = 0;
+    flag = 0;
+    
+    tmp = 0.61 - ei;
+    tmp = tmp/de;
+    int cut = tmp;
+
+    
+
+    
+    rd = malloc(sizeof(int)*nms);
+    randi(rd, nms, 0, nms);
+    
+    
+    
+
+    
+    
+    for (int k = 0; k < nms; k++)
+    {
+
+            peak[k] = 0;
+            for (int n = 0; n < cut; n++)
+            {
+                if (peak[k] < rho0[n+nsteps*k])
+               // if (peak[k] < rho0[n+nsteps*k])
+                {
+                    peak[k] = rho0[n+nsteps*k];
+                 //   peak[k] = rho0[n+nsteps*k];
+                    epeak[k] = ei+n*de;
+
+
+                }
+                
+            }
+
+       
+    }
+    
+    for (int k = 0; k < nms; k++)
+    {
+        psum = psum + peak[rd[k]];
+        esum = esum + epeak[rd[k]];
+    }
+    
+    psum /= nms;
+    esum /= nms;
+    
+    for (int k = 0; k < nms; k++) {
+        tmp = esum - epeak[k];
+        tmp = tmp*tmp;
+        dsum += tmp;
+    }
+    
+    dsum /= nms;
+    dsum = sqrt(dsum);
+    
+    
+    printf("Peak at %3.6f ± %3.6f\n", esum, dsum);
+    fprintf(fp, "Peak at %3.6f ± %3.6f\n", esum, dsum);
+
+    
+    free(rd);
+    free(peak);
+    free(epeak);
+    fclose(fp);
+}
+
+void peak_bootstrap_iter()
+{
+      double *peak, psum, *epeak, esum, dsum, tmp;
+       int *rd;
+       int counter, flag;
+    FILE *fp;
+
+    fp = fopen_path("iterPeakLocation.txt");
+
+
+       
+       peak = malloc(nms*sizeof(double));
+
+       if(peak == 0)
+       {
+           error("Failed to allocate auxiliary array");
+       }
+       
+       epeak = malloc(nms*sizeof(double));
+
+       if(epeak == 0)
+       {
+           error("Failed to allocate auxiliary array");
+       }
+       
+       dsum = 0;
+       counter = 0;
+       psum = 0;
+       esum = 0;
+       flag = 0;
+       
+       tmp = 0.61 - ei;
+       tmp = tmp/de;
+       int cut = tmp;
+      // cut = cut+1;
+       
+
+       
+       rd = malloc(sizeof(int)*nms);
+       randi(rd, nms, 0, nms);
+       
+       
+       
+
+       
+       
+       for (int k = 0; k < nms; k++)
+       {
+
+               peak[k] = 0;
+               for (int n = 0; n < cut; n++)
+               {
+                   if (peak[k] < rho1[n+nsteps*k])
+                  // if (peak[k] < rho1[n+nsteps*k])
+                   {
+                       peak[k] = rho1[n+nsteps*k];
+                       epeak[k] = ei+n*de;
+
+
+                   }
+                   
+               }
+
+          
+       }
+       
+       for (int k = 0; k < nms; k++)
+       {
+           psum = psum + peak[rd[k]];
+           esum = esum + epeak[rd[k]];
+       }
+       
+       psum /= nms;
+       esum /= nms;
+       
+       for (int k = 0; k < nms; k++) {
+           tmp = esum - epeak[k];
+           tmp = tmp*tmp;
+           dsum += tmp;
+       }
+       
+       dsum /= nms;
+       dsum = sqrt(dsum);
+       
+       
+       printf("Peak at %3.6f ± %3.6f\n", esum, dsum);
+       fprintf(fp, "Peak at %3.6f ± %3.6f\n", esum, dsum);
+
+
+       fclose(fp);
+       free(rd);
+       free(peak);
+       free(epeak);
+}
+
+
+
 
 void prepare_path()
 {
@@ -580,15 +937,19 @@ void prepare_path()
 void allocate_data()
 {
 	int count;
+    int th = tmx/2;
 
-	count = 4*tmx+2*tmx*nms;
-	corr = malloc(count*sizeof(mpfr_t));
-	cov = corr+tmx;
-	mcorr = cov+tmx;
+	//count = 4*tmx+2*tmx*nms;
+    count = tmx + tmx + tmx*nms + nms*th-nms + tmx-2 + nms*th+nms + nsteps;
+	corr = malloc(count*sizeof(mpfr_t)); // tmx
+	cov = corr+tmx; //tmx
+	mcorr = cov+tmx;    // tmx*nms
     
-    mass = mcorr+tmx*nms;
-    bmass = mass+tmx*nms;
-    deltam = bmass+tmx;
+    mass = mcorr+tmx*nms;   //nms*(T/2-1) = nms*T/2-nms
+    bmass = mass+th*nms-nms;      // T/2-1
+    deltam = bmass+th-1;         // T/2-1
+    smcorr = deltam+tmx/2-1;    // (T/2+1)nms = nms*T/2 + nms
+    deltazero = smcorr + nms*th+nms;    // nsteps
 
 	if(corr == NULL)
 	{
@@ -601,7 +962,58 @@ void allocate_data()
 	}
     
  
+
     
+    
+    bootrho0 = malloc(nsteps*sizeof(double));
+
+    if(bootrho0 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    bootdeltarho0 = malloc(nsteps*sizeof(double));
+
+    if(bootdeltarho0 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    bootrho1 = malloc(nsteps*sizeof(double));
+
+    if(bootrho1 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    bootdeltarho1 = malloc(nsteps*sizeof(double));
+
+    if(bootdeltarho1 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    
+    rho0 = malloc(nms*nsteps*sizeof(double));
+    if(rho0 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    rho1 = malloc(nms*nsteps*sizeof(double));
+    if(rho1 == 0)
+    {
+        error("Failed to allocate auxiliary array");
+    }
+    drho0 = malloc(nms*nsteps*sizeof(double));
+    if(drho0 == 0)
+     {
+         error("Failed to allocate auxiliary array");
+     }
+    drho1 = malloc(nms*nsteps*sizeof(double));
+    if(drho1 == 0)
+     {
+         error("Failed to allocate auxiliary array");
+     }
+
     
     
 }
@@ -631,6 +1043,7 @@ int main(int argc, char *argv[])
 		printf("  -emin    <float>   lower limit for integration over energy (default %1.6f)\n", emin);
 		printf("  -scan    <float>   perform a scan in lambda at the specified energy (not default)\n");
         printf("  -iter  <int>       enter 1 for an extra iteration (not default)\n");
+        printf("  -getmass              only compute the effective mass on the bootstrapped sample (not default)\n");
 		printf("\n");
 		printf("Kernels:\n");
 		printf("  0        Gaussian\n");
@@ -650,6 +1063,7 @@ int main(int argc, char *argv[])
 	find_dbl(argc, argv, "-emin", &emin);
 	find_dbl(argc, argv, "-scan", &escan);
     find_int(argc, argv, "-iter", &iter);
+    find_opt(argc, argv, "-getmass", &getmass);
 
 	srand48(1337);
 	mpfr_set_default_prec(3.322*prec);
@@ -661,7 +1075,14 @@ int main(int argc, char *argv[])
 	prepare_path();
 	allocate_data();
 	read_corr();
-        effective_mass();
+    
+    if (getmass)
+    {
+        bootmass();
+        fitmass();
+        exit(1);
+    }
+    
 
     if (iter)
     {
@@ -672,8 +1093,11 @@ int main(int argc, char *argv[])
         }
         else
         {
-            get_spectral_density_improv();
             get_spectral_density();
+            peak_bootstrap();
+            get_spectral_density_improv();
+            peak_bootstrap_iter();
+            
         }
     }
     else
@@ -685,6 +1109,7 @@ int main(int argc, char *argv[])
         else
         {
             get_spectral_density();
+            peak_bootstrap();
         }
         
     }
