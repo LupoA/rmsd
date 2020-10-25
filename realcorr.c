@@ -477,6 +477,7 @@ void get_spectral_density()
 
 		for(int k = 0; k < nsteps; k++)
 		{
+            // remember that estar = ei+n*de
 			mpfr_set_d(ec, ei+k*de, ROUNDING);
 			deltabar(tmp0, ec);
 			delta(tmp1, estar, ec);
