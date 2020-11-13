@@ -52,11 +52,11 @@ void read_corr()
         error("Unable to open file for reading");
     }
   
-    buf = malloc(2048*sizeof(char));
+    buf = malloc(4*2048*sizeof(char));
 
     offset = 0;
 
-    while(fgets(buf, 2048, fp))
+    while(fgets(buf, 4*2048, fp))
     {
   
         // token = strtok(buf, " ");
