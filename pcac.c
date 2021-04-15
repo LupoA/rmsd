@@ -142,7 +142,7 @@ void read_corr_AXIAL()
     offset = 0;
 
     while(fgets(buf, 2048, fp))
-    {/Users/s2002838/Desktop/analyse/16x16x16x32/F2/Mesons
+    {
   
         // token = strtok(buf, " ");
         token = strtok(buf, "//");
